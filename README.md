@@ -407,3 +407,157 @@ A: Yes, as a diagnostic tool:
 
 A: Current theory covers vanilla SGD. Adaptive optimizers implicitly perform Fisher preconditioning, so C_α computed from *preconditioned* gradients should still apply. This is ongoing work.
 
+
+
+---
+
+## K-FAC Extension: Correlated Fisher Approximation
+
+### Motivation
+
+The diagonal Fisher approximation assumes parameter independence, which fails for neural networks where weights within each layer are correlated through shared activations and gradients. K-FAC (Kronecker-Factored Approximate Curvature) provides a tractable middle ground.
+
+### Theory
+
+**Kronecker-Factored Fisher:** For layer ℓ with weight matrix W_ℓ:
+
+```
+I_ℓ = A_ℓ ⊗ G_ℓ
+```
+
+where:
+- **A_ℓ** = E[a_ℓ a_ℓᵀ] (input activation covariance)
+- **G_ℓ** = E[g_ℓ g_ℓᵀ] (output gradient covariance)
+
+**K-FAC Consolidation Ratio:**
+
+```
+C_α^KFAC = Σ_ℓ μ_ℓᵀ (A_ℓ⁻¹ ⊗ G_ℓ⁻¹) μ_ℓ / Σ_ℓ Tr((A_ℓ⁻¹ ⊗ G_ℓ⁻¹) D_ℓ)
+```
+
+**Properties:**
+- ✓ Reparameterization invariant (transforms covariantly)
+- ✓ Captures layer-wise parameter correlations
+- ✓ Computational cost: O(n²m²) per layer vs O(nm)² for full Fisher
+- ✓ Exact for linear layers with Gaussian activations
+
+### Implementation
+
+```python
+def compute_c_alpha_kfac(model, dataloader, n_samples=100, damping=1e-5):
+    """
+    Compute K-FAC consolidation ratio with Kronecker-factored Fisher.
+    
+    Returns:
+        dict with c_alpha_kfac, per-layer contributions, and Fisher condition numbers
+    """
+    total_signal, total_noise = 0.0, 0.0
+    layer_metrics = []
+    
+    for name, layer in model.named_modules():
+        if not isinstance(layer, (nn.Linear, nn.Conv2d)):
+            continue
+            
+        # Collect activations and gradients
+        activations, gradients = [], []
+        for batch in islice(dataloader, n_samples):
+            a = get_layer_activations(layer, batch)  # shape [batch, input_dim]
+            g = get_layer_gradients(layer, batch)    # shape [batch, output_dim]
+            activations.append(a)
+            gradients.append(g)
+        
+        A = torch.stack(activations).mean(0)  # [input_dim, input_dim]
+        G = torch.stack(gradients).mean(0)    # [output_dim, output_dim]
+        
+        # Add damping for numerical stability
+        A = A @ A.T / n_samples + damping * torch.eye(A.shape[0])
+        G = G.T @ G / n_samples + damping * torch.eye(G.shape[0])
+        
+        # Invert via Cholesky (more stable than direct inverse)
+        A_inv = torch.cholesky_inverse(torch.linalg.cholesky(A))
+        G_inv = torch.cholesky_inverse(torch.linalg.cholesky(G))
+        
+        # Compute mean gradient and covariance
+        mu = torch.cat([g.flatten() for g in gradients]).mean(dim=0)
+        D = torch.cov(torch.stack([g.flatten() for g in gradients]).T)
+        
+        # Signal: μᵀ (A⁻¹ ⊗ G⁻¹) μ using Kronecker identity
+        # Reshape mu as matrix: [output_dim, input_dim]
+        mu_mat = mu.reshape(G.shape[0], A.shape[0])
+        signal = torch.trace(G_inv @ mu_mat @ A_inv @ mu_mat.T).item()
+        
+        # Noise: Tr((A⁻¹ ⊗ G⁻¹) D) using Kronecker trace identity
+        # Tr((A⁻¹ ⊗ G⁻¹) D) = Tr(A⁻¹ @ D_reshaped @ G⁻¹)
+        D_mat = D.reshape(G.shape[0], A.shape[0], G.shape[0], A.shape[0])
+        noise = torch.einsum('ij,ikjl,kl->', G_inv, D_mat, A_inv).item()
+        
+        total_signal += signal
+        total_noise += noise
+        
+        layer_metrics.append({
+            "layer": name,
+            "signal": signal,
+            "noise": noise,
+            "c_alpha_layer": signal / (noise + 1e-10),
+            "fisher_condition": (torch.linalg.eigvalsh(A).max() * 
+                                torch.linalg.eigvalsh(G).max()) / 
+                               (torch.linalg.eigvalsh(A).min() * 
+                                torch.linalg.eigvalsh(G).min())
+        })
+    
+    return {
+        "c_alpha_kfac": total_signal / (total_noise + 1e-10),
+        "is_convergent": (total_signal / total_noise) > 1.0,
+        "total_signal": total_signal,
+        "total_noise": total_noise,
+        "layer_metrics": layer_metrics
+    }
+```
+
+### Comparison: Diagonal vs K-FAC
+
+| Metric                    | Diagonal C_α | K-FAC C_α |
+|---------------------------|-------------|-----------|
+| Parameter correlations    | Ignored     | Captured  |
+| Phase transition accuracy | Moderate    | High      |
+| Computation per layer     | O(d)        | O(n²+m²)  |
+| Memory overhead           | Minimal     | ~2×       |
+| Reparameterization inv.   | ✓           | ✓         |
+
+**When to use K-FAC:**
+- Networks with strong intra-layer correlations (ResNets, Transformers)
+- Diagonal C_α shows weak phase transitions (C_α ≈ 0.8-1.2 for long periods)
+- When Fisher condition number > 100 (indicates strong parameter coupling)
+
+**When diagonal suffices:**
+- Small networks (< 1M parameters)
+- Diagonal dominant gradients (verified via `torch.linalg.matrix_rank(D)`)
+- Computational constraints (embedded systems, mobile)
+
+### Validation Protocol
+
+1. **Consistency check:** K-FAC C_α should match diagonal C_α when:
+   - Layer activations are whitened (A ≈ I)
+   - Gradients are isotropic (G ≈ I)
+   
+2. **Invariance test:** Under weight reparameterization W → UWV:
+   ```python
+   c_alpha_original = compute_c_alpha_kfac(model, data)
+   model_transformed = apply_transform(model, U, V)
+   c_alpha_transformed = compute_c_alpha_kfac(model_transformed, data)
+   assert abs(c_alpha_original - c_alpha_transformed) < 0.05
+   ```
+
+3. **Phase transition sharpness:** K-FAC should show:
+   - Faster crossing of C_α = 1 threshold
+   - Lower variance in C_α estimates
+   - Earlier correlation with test accuracy
+
+### Future Work
+
+- **Block-diagonal K-FAC:** Extend to multi-head attention and residual blocks
+- **Streaming estimation:** Online K-FAC updates without storing all gradients
+- **Adaptive damping:** Tikhonov regularization scaled by Jeffreys prior density
+- **Distributed K-FAC:** Communication-efficient Fisher aggregation for federated learning
+
+---
