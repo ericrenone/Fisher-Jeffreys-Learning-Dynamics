@@ -352,23 +352,6 @@ python experiments/reparameterization.py # Invariance verification
 
 ---
 
-## Contributing
-
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for:
-
-- Code style guidelines
-- Testing requirements
-- Documentation standards
-- Experimental validation protocols
-
-**Priority areas:**
-1. Full Fisher matrix approximations (K-FAC, FOOF)
-2. Non-Gaussian gradient distributions
-3. Transformer-specific validations
-4. Biological neural network connections
-
----
-
 ## Acknowledgments
 
 This framework builds on foundational work in:
