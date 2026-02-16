@@ -113,33 +113,7 @@ C_α > 1 implies negative entropy production → posterior sharpening.
 
 ---
 
-## Installation
 
-### Requirements
-
-- Python ≥ 3.8
-- PyTorch ≥ 2.0
-- NumPy ≥ 1.20
-- Matplotlib ≥ 3.3 (for visualization)
-
-### Basic Setup
-
-```bash
-pip install torch numpy matplotlib
-git clone https://github.com/yourusername/fjld.git
-cd fjld
-```
-
-### Development Setup
-
-```bash
-pip install -r requirements.txt  # includes testing dependencies
-pytest tests/                     # run test suite
-```
-
----
-
-## Quick Start
 
 ### Computing the Consolidation Ratio
 
@@ -215,17 +189,6 @@ Epoch 4: C_α = 2.341 [CONVERGENT]
 
 ---
 
-## Validation & Reproducibility
-
-### Synthetic Experiments
-
-We provide reproducible experiments demonstrating phase transitions:
-
-```bash
-python experiments/grokking_demo.py      # Modular arithmetic
-python experiments/double_descent.py     # Interpolation threshold
-python experiments/reparameterization.py # Invariance verification
-```
 
 ### Verification Checklist
 
@@ -360,8 +323,6 @@ This framework builds on foundational work in:
 - **Bayesian inference:** Harold Jeffreys' invariant priors
 - **Martingale theory:** Classical stochastic approximation
 - **Deep learning theory:** Neural tangent kernels, feature learning dynamics
-
-We thank the community for feedback on early versions of this work.
 
 ---
 
