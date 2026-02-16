@@ -1,4 +1,4 @@
-# Fisher-Jeffreys Learning Dynamics (FJLD): Reparameterization-Invariant Phase Transitions in Stochastic Optimization**
+# Fisher-Jeffreys Learning Dynamics (FJLD): Reparameterization-Invariant Phase Transitions in Stochastic Optimization
 
 ## Overview
 
